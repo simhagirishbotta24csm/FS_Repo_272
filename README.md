@@ -41,27 +41,39 @@ Open http://localhost:5173. After seeding, log in as `maya`, `dev`, `sofia`, `ke
 
 Need MongoDB quickly? `docker run -d -p 27017:27017 --name murmur-mongo mongo:7`
 
-### Production-style run
+### Production-style local run
 
 ```bash
 npm run build     # builds client/dist
-npm start         # API serves the built client at http://localhost:5000 (needs JWT_SECRET set)
+npm start         # starts the API at http://localhost:5000
 ```
 
-## Deploying to Vercel (single project)
+The frontend and API are separate services in deployment. For local development, use `npm run dev` to run both together.
 
-The client, API and image storage all run on Vercel. `vercel.json` builds the React app, rewrites `/api/*` to the
-serverless function in `api/index.js` (which wraps the Express app) and falls back to `index.html` for client routes.
+## Deploying to Vercel (Services)
 
-1. Push the project to GitHub (`.env` is git-ignored).
-2. MongoDB Atlas → **Network Access** → allow `0.0.0.0/0` (Vercel's IPs change).
-3. vercel.com → **Add New → Project** → import the repo. Leave the root directory as the repo root; the settings come from `vercel.json`.
-4. Under **Environment Variables** add `MONGO_URI` (with `/murmur` database name) and `JWT_SECRET` (a long random string).
-5. In the project's **Storage** tab, create a **Blob** store and connect it to the project. This adds `BLOB_READ_WRITE_TOKEN`, so uploads persist.
-6. Deploy (or Redeploy after adding variables). Seed demo data from your own machine: `npm run seed`, using the same `MONGO_URI` in `server/.env`.
+This repository is configured as one Vercel project with two independently built services on a shared domain:
 
-Notes: uploads are limited to 4 MB because Vercel functions reject request bodies over 4.5 MB. Without `BLOB_READ_WRITE_TOKEN`
-(local development) images are saved to `server/uploads` instead.
+| Service | Root | Public paths |
+| --- | --- | --- |
+| `client` | `client/` | `/` and frontend routes |
+| `server` | `server/` | `/api/*` and `/uploads/*` |
+
+The top-level rewrites in `vercel.json` send API and upload requests to the Express service. All remaining requests go to the Vite frontend service, whose service-scoped rewrite serves `index.html` for React Router deep links. The browser's API wrapper uses same-origin relative `/api` URLs, so no service binding or hardcoded backend hostname is needed.
+
+1. Push the project to GitHub and import it into Vercel.
+2. In the Vercel project settings, select **Services** as the project framework. Vercel Services is currently in Beta; the Services framework setting is required for the `services` configuration in `vercel.json` to be used.
+3. Keep the repository root as the project root. Each service's root and entrypoint are configured in `vercel.json`.
+4. Add these environment variables to the **server service** (or the project environment if Vercel exposes shared project variables):
+   - `MONGO_URI` — your MongoDB Atlas connection string, including the `murmur` database name.
+   - `JWT_SECRET` — a long, random secret.
+   - `BLOB_READ_WRITE_TOKEN` — connect a Vercel Blob store so uploaded images persist.
+5. In MongoDB Atlas, allow Vercel connections in **Network Access** (for example, `0.0.0.0/0`, subject to your security requirements).
+6. Deploy. Seed demo data from your own machine with `npm run seed`, using the same `MONGO_URI` in `server/.env`.
+
+The Express service entrypoint is `server/src/vercel.js`. It reuses the existing Express app, establishes a cached MongoDB connection, and checks that `MONGO_URI` and `JWT_SECRET` are configured. The old root-level `api/index.js` serverless wrapper has been removed because the server service now owns the API routes directly.
+
+**Uploads:** Configure `BLOB_READ_WRITE_TOKEN` for production. Without it, the upload middleware falls back to local disk storage, which is not persistent across serverless deployments. Uploads are limited to 4 MB because Vercel functions reject request bodies over 4.5 MB.
 
 ## Project structure
 
@@ -69,7 +81,8 @@ Notes: uploads are limited to 4 MB because Vercel functions reject request bodie
 murmur/
 ├── server/
 │   └── src/
-│       ├── index.js, app.js        # bootstrap, middleware, routing
+│       ├── index.js, app.js        # local bootstrap, Express app
+│       ├── vercel.js               # Vercel Express service entrypoint
 │       ├── models/                 # User, Post, Comment, Follow, Like
 │       ├── routes/                 # auth, users, posts, comments
 │       ├── middleware/             # auth (JWT), upload (multer), error handling
@@ -125,8 +138,8 @@ All routes are under `/api`. `🔒` = requires `Authorization: Bearer <token>`. 
 - **Counters are only changed when a `Like`/`Follow` document is actually created or deleted**, so they cannot drift when
   requests race.
 - **Uploads** are stored on local disk (`server/uploads`) with random filenames and an extension derived from the verified MIME type.
-  For a real deployment, swap `middleware/upload.js` for S3 / Cloudinary.
-- The JWT lives in `localStorage` for simplicity. For a production app, prefer an httpOnly cookie with CSRF protection.
+  For production, configure Vercel Blob using `BLOB_READ_WRITE_TOKEN`.
+- **Authentication** uses JWTs stored in `localStorage` for simplicity. For a production app, prefer an httpOnly cookie with CSRF protection.
 
 ## Ideas to extend
 
