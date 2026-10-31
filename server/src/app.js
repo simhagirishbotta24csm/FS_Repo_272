@@ -9,7 +9,7 @@ import commentRoutes from './routes/comments.js';
 import { UPLOAD_DIR } from './middleware/upload.js';
 import { notFound, errorHandler } from './middleware/error.js';
 
-export function createApp() {
+export function createApp({ beforeRoutes } = {}) {
   const app = express();
   app.disable('x-powered-by');
   if (process.env.VERCEL) app.set('trust proxy', 1);
@@ -30,6 +30,7 @@ export function createApp() {
   app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173' }));
   app.use(express.json({ limit: '100kb' }));
   if (process.env.NODE_ENV !== 'test') app.use(morgan('dev'));
+  if (beforeRoutes) app.use(beforeRoutes);
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
   app.use('/api/auth', authRoutes);
